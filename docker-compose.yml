@@ -1,0 +1,108 @@
+name: zbx-lab
+
+x-db-env: &db-env
+  DB_SERVER_HOST: zbx-db
+  POSTGRES_USER: ${POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+  POSTGRES_DB: ${POSTGRES_DB}
+
+services:
+  # 1. База конфігурації та історії Zabbix
+  zbx-db:
+    image: postgres:16.4-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - zbx-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      retries: 20
+    networks: [zbx-back]
+    restart: unless-stopped
+
+  # 2. Zabbix server: опитує агентів, рахує тригери, запускає дії
+  zabbix-server:
+    image: zabbix/zabbix-server-pgsql:alpine-7.0.32
+    environment:
+      <<: *db-env
+      ZBX_CACHESIZE: 64M
+      ZBX_STARTPOLLERS: 5
+      ZBX_STARTPOLLERSUNREACHABLE: 1
+      ZBX_HOUSEKEEPINGFREQUENCY: 1
+    depends_on:
+      zbx-db:
+        condition: service_healthy
+    networks: [zbx-back, zbx-front]
+    restart: unless-stopped
+
+  # 3. Веб-інтерфейс (nginx + PHP-FPM) — єдиний опублікований порт
+  zabbix-web:
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32
+    environment:
+      <<: *db-env
+      ZBX_SERVER_HOST: zabbix-server
+      PHP_TZ: ${PHP_TZ}
+    ports:
+      - "8081:8080"
+    depends_on: [zabbix-server]
+    networks: [zbx-back, zbx-front]
+    restart: unless-stopped
+
+  # 4. Агент на «вузлі» Zabbix server (системні метрики ВМ)
+  zabbix-agent:
+    image: zabbix/zabbix-agent2:alpine-7.0.32
+    hostname: zabbix-agent
+    environment:
+      ZBX_HOSTNAME: Zabbix server
+      ZBX_SERVER_HOST: zabbix-server
+    networks: [zbx-front]
+    restart: unless-stopped
+
+  # 5. Агент вузла docker-node: Docker-плагін + власні UserParameter
+  docker-node-agent:
+    image: zabbix/zabbix-agent2:alpine-7.0.32
+    hostname: docker-node
+    user: root
+    environment:
+      ZBX_HOSTNAME: docker-node
+      ZBX_SERVER_HOST: zabbix-server
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./agent/lab_params.conf:/etc/zabbix/zabbix_agentd.d/lab_params.conf:ro
+    networks: [zbx-front]
+    restart: unless-stopped
+
+  # 6. Приймач вебхуків: «канал сповіщень» для дій Zabbix
+  alert-receiver:
+    image: python:3.12-alpine
+    command: ["python", "-u", "/app/receiver.py"]
+    volumes:
+      - ./receiver:/app:ro
+      - alerts:/data
+    networks: [zbx-front]
+    restart: unless-stopped
+
+  # 7. Генератор навантаження (запускається окремо: --profile load)
+  stress:
+    build: ./load
+    profiles: [load]
+    command: ["stress-ng", "--cpu", "3", "--cpu-load", "90", "--vm", "1", "--vm-bytes", "384M", "--timeout", "330s", "--metrics-brief"]
+    networks: [zbx-front]
+
+  # 8. «Нестабільний сервіс» для перевірки тригера зупинки контейнера
+  demo-app:
+    image: alpine:3.20
+    command: ["sh", "-c", "while true; do date; sleep 30; done"]
+    networks: [zbx-front]
+    restart: "no"
+
+volumes:
+  zbx-db-data:
+  alerts:
+
+networks:
+  zbx-back:
+  zbx-front:
