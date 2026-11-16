@@ -25,7 +25,7 @@ services:
 
   # 2. Zabbix server: опитує агентів, рахує тригери, запускає дії
   zabbix-server:
-    image: zabbix/zabbix-server-pgsql:alpine-7.0.32
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
     environment:
       <<: *db-env
       ZBX_CACHESIZE: 64M
@@ -40,7 +40,7 @@ services:
 
   # 3. Веб-інтерфейс (nginx + PHP-FPM) — єдиний опублікований порт
   zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.32
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
     environment:
       <<: *db-env
       ZBX_SERVER_HOST: zabbix-server
@@ -53,7 +53,7 @@ services:
 
   # 4. Агент на «вузлі» Zabbix server (системні метрики ВМ)
   zabbix-agent:
-    image: zabbix/zabbix-agent2:alpine-7.0.32
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
     hostname: zabbix-agent
     environment:
       ZBX_HOSTNAME: Zabbix server
@@ -63,7 +63,7 @@ services:
 
   # 5. Агент вузла docker-node: Docker-плагін + власні UserParameter
   docker-node-agent:
-    image: zabbix/zabbix-agent2:alpine-7.0.32
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0-latest
     hostname: docker-node
     user: root
     environment:
